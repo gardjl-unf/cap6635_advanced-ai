@@ -3,7 +3,7 @@
 A bit of a pain in the ass, in that OpenAI gym won't install "other" in anything other than Python 3.11, NOT Python 3.12 (current).
 But, that being said,  
 python3 -m venv ./environment  
-source ./environment/bin  
+source ./environment/bin/activate  
 pip install -r requirements.txt  
 
 Then just:  
