@@ -7,6 +7,6 @@ source ./environment/bin/activate
 pip install -r requirements.txt  
 
 Then just:  
-python dqpomdp.py -n DRQN -v ALE/Centipede-v5 -b 100000  
+python dqpomdp.py -n DRQN -v ALE/Centipede-v5 -b 100000 -m 650000  
 And:  
-python dqpomdp.py -n DQN -v ALE/Centipede-v5 -b 100000  
+python dqpomdp.py -n DQN -v ALE/Centipede-v5 -b 100000 -m 650000  
