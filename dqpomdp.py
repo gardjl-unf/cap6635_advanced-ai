@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 
-# LOOK INTO DQN/DRQN Number of frames to parse
-
 __author__ = "Jason Gardner"
 __credits__ = ["Jason Gardner"]
 __license__ = "GPL"
@@ -21,6 +19,7 @@ import json
 import uuid
 import time
 import pickle
+import string
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Input, Conv2D, Flatten, Dense, LSTM, Reshape
 from collections import deque
@@ -177,8 +176,8 @@ class Model():
                      Clone Steps = {self.state['clonesteps']}\n\
                      Batch Size = {self.state['batchsize']}\n\
                      Gamma = {self.state['gamma']}\n\
-                     X = {self.state['x']}\n\
-                     Y = {self.state['y']}\n\
+                     X (# of Frames)= {self.state['x']}\n\
+                     Y (Reward Value)= {self.state['y']}\n\
                      ")
          json.dump(self.state, f)
          logger.info(f"Saved state to './models/{self.uuid}/state.json'")
@@ -265,7 +264,7 @@ class Arguments(argparse.ArgumentParser):
                         "--frameskip", 
                         help = "skip every nth frame", 
                         type = int, 
-                        default = 2)
+                        default = 4)
       
       self.add_argument("-q",
                         "--framesequence",
@@ -324,7 +323,7 @@ class Arguments(argparse.ArgumentParser):
       self.add_argument("-b", 
                         "--buffer", 
                         help = "the length of the buffer", 
-                        type = int,
+                        type = int, 
                         default = 400000)
       
       self.add_argument("-m", 
@@ -447,22 +446,28 @@ class Agent:
       self.model = self.M.model
       self.q_model = tf.keras.models.clone_model(self.model)
       self.q_model.set_weights(self.model.get_weights())
-      self.update_frequency = state['updatefrequency']
+      self.update_frequency = state['updatefrequency'] + 1
       
       self.debug = None
 
    def run(self):   
-      self.S = self.env.reset()[0]
+      self.S = self.env.reset()
 
       if self.state['play'] is True:
          self.play_game()
+
+      if parser.data['test'] is True:
+         self.test_populate_buffer_with_dummy_data()
+         self.training_step()
+
+         return self.model
      
       for _ in range(self.max_time_steps):
          self.time += 1
          
          if self.time != 0 and self.time % self.eval == 0 and self.time > len(self.buffer):
-               self.X.append(self.time)
-               self.Y.append(self.evaluate())
+            self.X.append(self.time)
+            self.Y.append(self.evaluate())
 
          if self.render:
             self.env.render()
@@ -473,7 +478,7 @@ class Agent:
          self.epsilon = max(0.1, self.epsilon - self.epsilonStep)
 
          action = self.get_action(self.epsilon)
-         logger.info(f"Step: {self.time}, Action: {action}, Buffer Length: {len(self.buffer)}, ε: {self.epsilon}")
+         #logger.info(f"Step: {self.time}, Action: {action}, Buffer Length: {len(self.buffer)}, ε: {self.epsilon}")
          self.S, _, done = self.play_step(action)
          
          if done:
@@ -487,8 +492,8 @@ class Agent:
    def play_step(self, action):
       #obs, reward, terminated, truncated , info = self.env.step(action)
       S_tag, reward, done, _, _ = self.env.step(action)
-      if self.S is not None:
-         self.buffer.append([self.S, action, reward, S_tag, done])
+
+      self.buffer.append([self.S, action, reward, S_tag, done])
          
       if DEBUG:
          experience = self.buffer[0]
@@ -510,12 +515,11 @@ class Agent:
       return S_tag, reward, done
 
    def get_action(self, epsilon):
-      if self.S is not None:
-         if np.random.rand() < epsilon:
-            return np.random.randint(self.num_actions)
-         else:
-            Q = self.model.predict(self.S[np.newaxis])
-            return np.argmax(Q[0])
+      if np.random.rand() < epsilon:
+         return np.random.randint(self.num_actions)
+      else:
+         Q = self.model.predict(self.S[np.newaxis])
+         return np.argmax(Q[0])
 
    def training_step(self):
       experiences = self.get_experiences()
@@ -545,10 +549,10 @@ class Agent:
 
       states, actions, rewards, next_states, dones = [
          np.array([experience[field_index] for experience in sequences]) for field_index in range(5)]
-
+            
       return states, actions, rewards, next_states, dones
 
-   def evaluate(self, num_episodes = 10, max_episode_time = 5) -> float:
+   def evaluate(self, num_episodes = 10, max_episode_time = 1) -> float:
       #Policies were evaluated every 50,000 iterations by playing 10 episodes and averaging the resulting scores. 
       values = []
       self.M.save_model(self.state)
@@ -561,7 +565,8 @@ class Agent:
                if self.render:
                   self.env.render()
                action = self.get_action(epsilon = 0.0)
-               _, R, done, _, _ = self.env.step(action)
+               S, R, done, _, _ = self.env.step(action)
+               self.S = S
                value += R
          logger.info(f"Evaluating: Iteration {i} of {num_episodes}, Value: {value}")
          values.append(value)
@@ -628,6 +633,11 @@ if __name__ == '__main__':
    logger = Logging().get_logger()
    args = Arguments().parse_args()
    parser = Parsing(args)
+   
+   if parser.data['play'] is False:
+      FileOutputHandler = logging.FileHandler(f"{parser.data['network']}-{parser.data['environment'].translate(str.maketrans('', '', string.punctuation))}.log", "w", encoding="UTF-8")
+      logger.addHandler(FileOutputHandler)   
+   
    agent = Agent(parser.data)
    agent.run()
    logger.info("Training complete")
