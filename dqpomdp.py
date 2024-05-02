@@ -425,6 +425,7 @@ class Agent:
                         grayscale_obs = True,
                         scale_obs = True)
       self.env = transform_reward(self.env, lambda reward: np.clip(reward, self.min_reward, self.max_reward))
+      # If only this worked...
       self.env.metadata['render_fps'] = 360
       self.env.seed(self.seed)
       self.env.reset()
@@ -434,7 +435,7 @@ class Agent:
       self.batch_size = state['batchsize']
       self.frame_sequence = state['framesequence'] if state['network'] == "DRQN" else 1
       self.gamma = state['gamma']
-      self.S = None
+      self.game_state = None
       self.X = state['x']
       self.Y = state['y']
       np.random.seed(self.seed)
@@ -446,12 +447,12 @@ class Agent:
       self.model = self.M.model
       self.q_model = tf.keras.models.clone_model(self.model)
       self.q_model.set_weights(self.model.get_weights())
-      self.update_frequency = state['updatefrequency'] + 1
+      self.update_frequency = state['updatefrequency']
       
       self.debug = None
 
    def run(self):   
-      self.S = self.env.reset()
+      self.game_state = self.env.reset()
 
       if self.state['play'] is True:
          self.play_game()
@@ -479,10 +480,10 @@ class Agent:
 
          action = self.get_action(self.epsilon)
          #logger.info(f"Step: {self.time}, Action: {action}, Buffer Length: {len(self.buffer)}, ε: {self.epsilon}")
-         self.S, _, done = self.play_step(action)
+         self.game_state, _, done = self.play_step(action)
          
          if done:
-               self.S = self.env.reset()[0]
+               self.game_state = self.env.reset()[0]
                
          if self.time > len(self.buffer):
             self.training_step()    
@@ -493,7 +494,7 @@ class Agent:
       #obs, reward, terminated, truncated , info = self.env.step(action)
       S_tag, reward, done, _, _ = self.env.step(action)
 
-      self.buffer.append([self.S, action, reward, S_tag, done])
+      self.buffer.append([self.game_state, action, reward, S_tag, done])
          
       if DEBUG:
          experience = self.buffer[0]
@@ -518,7 +519,7 @@ class Agent:
       if np.random.rand() < epsilon:
          return np.random.randint(self.num_actions)
       else:
-         Q = self.model.predict(self.S[np.newaxis])
+         Q = self.model.predict(self.game_state[np.newaxis])
          return np.argmax(Q[0])
 
    def training_step(self):
@@ -554,23 +555,28 @@ class Agent:
 
    def evaluate(self, num_episodes = 10, max_episode_time = 1) -> float:
       #Policies were evaluated every 50,000 iterations by playing 10 episodes and averaging the resulting scores. 
-      values = []
+      reward_values = []
       self.M.save_model(self.state)
       for i in range(num_episodes):
          self.env.reset()
-         value = 0
+         total_reward = 0
          start_time = time.time()
          done = False
+         backup_timer = 0
          while (time.time() - start_time) < max_episode_time * 60 and not done:
-               if self.render:
-                  self.env.render()
-               action = self.get_action(epsilon = 0.0)
-               S, R, done, _, _ = self.env.step(action)
-               self.S = S
-               value += R
-         logger.info(f"Evaluating: Iteration {i} of {num_episodes}, Value: {value}")
-         values.append(value)
-      return np.mean(values)
+            backup_timer += 1
+            if self.render:
+               self.env.render()
+            action = self.get_action(epsilon = 0.0)
+            state, reward, done, _, _ = self.env.step(action)
+            if done or backup_timer > self.eval:
+               break
+            self.game_state = state
+            total_reward += reward
+         logger.info(f"Evaluating: Iteration {i} of {num_episodes}, Value: {total_reward}")
+         reward_values.append(total_reward)
+      logger.info(f" Rewards: {reward_values}, Average: {np.mean(reward_values)}")
+      return np.mean(reward_values)
    
    def test_populate_buffer_with_dummy_data(self):
       for _ in range(500):
